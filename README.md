@@ -6,7 +6,16 @@ Single Swift file, no dependencies.
 
 ## Install
 
-Requires Xcode or the Command Line Tools (`xcode-select --install`).
+Download the latest release (universal binary, macOS 12+):
+
+```sh
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/pro-verstka/leftovers/releases/latest/download/leftovers-macos.tar.gz | tar -xz -C ~/.local/bin
+```
+
+The binary is not notarized. If you download it with a browser instead of `curl`, run `xattr -d com.apple.quarantine ~/.local/bin/leftovers`.
+
+Or build from source (requires Xcode or the Command Line Tools):
 
 ```sh
 make install          # builds and copies to ~/.local/bin
@@ -19,6 +28,7 @@ make install PREFIX=/usr/local
 leftovers             # interactive, scans ~/Library and /Library
 sudo leftovers        # also lets you remove items in /Library
 leftovers --list      # print path, size, date and exit
+leftovers --version   # print version
 ```
 
 | Key | Action |
@@ -44,3 +54,14 @@ Containers and Group Containers are protected by macOS. Their size shows as `?`,
 ```sh
 make test
 ```
+
+## Release
+
+Push a tag. GitHub Actions builds the universal binary and publishes it to Releases.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`make dist` builds the same archive locally into `dist/`.

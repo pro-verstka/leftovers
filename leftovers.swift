@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 
+let VERSION = "dev"
 let fm = FileManager.default
 let env = ProcessInfo.processInfo.environment
 let HOME = env["SUDO_USER"].flatMap { NSHomeDirectoryForUser($0) } ?? NSHomeDirectory()
@@ -629,7 +630,9 @@ for name in ["com.other.app", "Microsoft Edge Beta", "shadPS4", "XXXXXXXXXX.com.
 print("ok")
 #else
 setlocale(LC_CTYPE, "")
-if CommandLine.arguments.contains("--list") || isatty(0) == 0 || isatty(1) == 0 {
+if CommandLine.arguments.contains("--version") || CommandLine.arguments.contains("-v") {
+    print("leftovers \(VERSION)")
+} else if CommandLine.arguments.contains("--list") || isatty(0) == 0 || isatty(1) == 0 {
     FileHandle.standardError.write("Scanning…\n".data(using: .utf8)!)
     for it in scan() { print("\(it.path)\t\(human(it.size))\t\(date(it.mtime))") }
 } else {
