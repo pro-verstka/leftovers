@@ -17,7 +17,8 @@ dist: src
 	tar -czf dist/leftovers-macos.tar.gz -C .build leftovers
 	cd dist && shasum -a 256 leftovers-macos.tar.gz > leftovers-macos.tar.gz.sha256
 
-install: leftovers
+install:
+	@test -f leftovers || $(MAKE) leftovers
 	install -d $(PREFIX)/bin
 	install -m 755 leftovers $(PREFIX)/bin/leftovers
 
