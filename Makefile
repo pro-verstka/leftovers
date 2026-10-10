@@ -18,12 +18,13 @@ dist: src
 	cd dist && shasum -a 256 leftovers-macos.tar.gz > leftovers-macos.tar.gz.sha256
 
 install:
-	@test -f leftovers || $(MAKE) leftovers
+	@test leftovers -nt leftovers.swift || $(MAKE) leftovers
 	install -d $(PREFIX)/bin
 	install -m 755 leftovers $(PREFIX)/bin/leftovers
 
 test:
-	swiftc -D SELFTEST leftovers.swift -o /tmp/leftovers-selftest && /tmp/leftovers-selftest
+	swiftc -D SELFTEST leftovers.swift -o /tmp/leftovers-selftest
+	H=$$(mktemp -d) && CFFIXED_USER_HOME=$$H /tmp/leftovers-selftest; r=$$?; rm -rf $$H; exit $$r
 
 clean:
 	rm -rf leftovers .build dist
