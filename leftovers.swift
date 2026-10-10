@@ -696,9 +696,11 @@ struct Layout {
         let day = showDate ? "  " + fit(date(it.mtime), 10) : ""
         if current { return ESC + "1;7m" + fit(check + path + size + day + " ", w) + RESET }
         let cut = path.lastIndex(of: "/").map { path.index(after: $0) } ?? path.startIndex
-        return (it.error != nil ? RED : selected ? GREEN : DIM) + check + RESET + DIM + path[..<cut] + RESET
-            + (selected ? GREEN : "") + path[cut...] + RESET + sizeColor(it.size) + size + RESET
-            + (it.recent ? YELLOW : DIM) + day + " " + RESET
+        let mark: String = it.error != nil ? RED : selected ? GREEN : DIM
+        let folder = String(path[..<cut]), name = String(path[cut...])
+        let left: String = mark + check + RESET + DIM + folder + RESET + (selected ? GREEN : "") + name + RESET
+        let right: String = sizeColor(it.size) + size + RESET + (it.recent ? YELLOW : DIM) + day + " " + RESET
+        return left + right
     }
 
     func details(_ it: Item) -> String {
