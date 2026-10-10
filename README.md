@@ -4,6 +4,8 @@ Terminal UI for macOS that finds files left behind by uninstalled apps — prefe
 
 Single Swift file, no dependencies.
 
+![leftovers](screenshot.png)
+
 ## Install
 
 Download the latest release (universal binary, macOS 12+):
