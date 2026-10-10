@@ -159,7 +159,8 @@ struct Index {
 
     func known(_ name: String) -> Bool {
         let k = key(name)
-        if let x = EXCLUDED_ID, k == x || k.hasPrefix(x + ".") { return false }
+        if let x = EXCLUDED_ID, k == x || k.hasPrefix(x + "."),
+           !idset.contains(where: { $0.hasPrefix(x + ".") && (k == $0 || k.hasPrefix($0 + ".")) }) { return false }
         if teams.contains(String(name.prefix(10))) && name.dropFirst(10).first == "." && !matches(k, ID_RE) {
             return true
         }
@@ -294,8 +295,8 @@ func buildIndex() -> (index: Index, spotlightOK: Bool) {
     let found = Set(String(decoding: run(["/usr/bin/mdfind", "kMDItemContentType == 'com.apple.application-bundle'"]).out,
                            as: UTF8.self).split(separator: "\n").map(String.init))
     let top = globbedApps(TOP_APP_DIRS)
-    let apps = found.filter { !$0.contains("/CoreSimulator/") }.union(top).union(globbedApps(APP_DIRS))
-        .filter { !excluded($0) }
+    let apps = found.filter { !$0.contains("/CoreSimulator/") }.union(globbedApps(APP_DIRS))
+        .filter { !excluded($0) && (lstatMode($0 + "/Contents") != nil || lstatMode($0 + "/WrappedBundle") != nil) }
     let inLib = apps.filter { $0.hasPrefix(LIB + "/") }
     let visible = globbedApps(["/Applications", HOME + "/Applications"]).filter { lstatMode($0) == S_IFDIR }
     let spotlightOK = visible.filter(found.contains).count * 5 >= visible.count * 4
@@ -421,7 +422,7 @@ func leftoverReason(_ idx: Index, _ d: String, _ name: String) -> String? {
     if name.hasPrefix(".") || SCAN_SET.contains(p) || lstatMode(TEMPLATE + p) != nil || idx.zapped(p)
         || hasPrefix(idx.appPaths, p + "/") { return nil }
     let target = d.hasSuffix("/LaunchAgents") || d.hasSuffix("/LaunchDaemons") ? launchdTarget(p) : nil
-    if let t = target, missing(t) { return "launchd job runs \(tilde(t)), which no longer exists" }
+    if let t = target, missing(t), !t.hasPrefix("/Volumes/") { return "launchd job runs \(tilde(t)), which no longer exists" }
     if let t = target, !foreignTarget(t) { return nil }
     return idx.known(name) || foreignOnly(p) ? nil : "no installed app matches this name"
 }
@@ -491,7 +492,7 @@ func scan() -> (items: [Item], warnings: [String]) {
 func findApp(_ query: String) -> String? {
     let found: String?
     if query.contains("/") {
-        let p = URL(fileURLWithPath: expand(query)).standardizedFileURL.path
+        let p = realpath(expand(query), nil).map { r in defer { free(r) }; return String(cString: r) } ?? ""
         found = p.hasSuffix(".app") && lstatMode(p) == S_IFDIR && !p.dropLast(4).contains(".app/") ? p : nil
     } else {
         let q = sub(query.lowercased(), "\\.app$")
@@ -615,9 +616,9 @@ func addIgnore(_ path: String) throws {
         guard let h = FileHandle(forWritingAtPath: IGNORE_FILE) else {
             return try Data(line.utf8).write(to: URL(fileURLWithPath: IGNORE_FILE))
         }
-        h.seekToEndOfFile()
-        h.write(Data(line.utf8))
-        h.closeFile()
+        defer { try? h.close() }
+        try h.seekToEnd()
+        try h.write(contentsOf: Data(line.utf8))
     }
 }
 
@@ -749,18 +750,23 @@ func ui(_ initial: [Item], notes: [String], preselect: Bool) {
     var notes = notes
     var msg: (text: String, style: String)? = notes.isEmpty ? nil : (notes.removeFirst(), BAR_ASK)
     var pending = [UInt8]()
+    func partial() -> Bool {
+        guard pending.first == 27 else { return pending.isEmpty }
+        return pending.count < 3 || (pending[1] == 91 || pending[1] == 79) && !pending[2...].contains { (64...126).contains($0) }
+    }
     func readKey() -> [UInt8] {
-        if pending.isEmpty {
+        while partial() {
             var p = pollfd(fd: 0, events: Int16(POLLIN), revents: 0)
-            guard poll(&p, 1, 100) > 0 else { return [] }
+            guard poll(&p, 1, pending.isEmpty ? 100 : 10) > 0 else { break }
             var buf = [UInt8](repeating: 0, count: 64)
             let n = read(0, &buf, 64)
             guard n > 0 else {
                 gotSignal = SIGHUP
                 return []
             }
-            pending = Array(buf[..<n])
+            pending += buf[..<n]
         }
+        if pending.isEmpty { return [] }
         var len = 1
         if pending[0] == 27, pending.count > 2, pending[1] == 91 || pending[1] == 79 {
             len = 2
@@ -786,7 +792,7 @@ func ui(_ initial: [Item], notes: [String], preselect: Bool) {
     }
     func help(_ h: Int, _ w: Int) -> String {
         let legend = [(YELLOW, "2026-01-01", "date modified in the last \(Int(RECENT_DAYS)) days, may still be in use"),
-                      (RED, "[!]", "could not be moved, the line above the status bar says why")]
+                      (RED, "red", "could not be moved, the line above the status bar says why")]
         var lines = [BOLD + "Keys" + RESET] + HELP.map { BOLD + fit($0.0, 16) + RESET + fit($0.1, max(0, w - 20)) }
             + [""] + legend.map { $0.0 + fit($0.1, 16) + RESET + fit($0.2, max(0, w - 20)) }
         if lines.count > h - 1 { lines = Array(lines.dropFirst().filter { !$0.isEmpty }.prefix(max(0, h - 1))) }
@@ -896,7 +902,7 @@ func ui(_ initial: [Item], notes: [String], preselect: Bool) {
             sel.subtract(moved)
             msg = failed == 0
                 ? ("✓ Moved \(moved.count) \(moved.count == 1 ? "item" : "items") to Trash", BAR_OK)
-                : ("✗ Moved \(moved.count), failed \(failed) — see items marked [!]", BAR_ERR)
+                : ("✗ Moved \(moved.count), failed \(failed) — see red items", BAR_ERR)
         default: break
         }
     }
@@ -905,13 +911,15 @@ func ui(_ initial: [Item], notes: [String], preselect: Bool) {
 #if SELFTEST
 let idx = Index(
     ids: ["com.foo.bar", "dev.kdrag0n.MacVirt", "2BUA8C4S2C.com.agilebits", "uk.co.revolution.BS1R",
-          "ru.kontur.updater", "com.raycast.macos", "com.google.android.studio", "EQHXZ8M8AV.group.com.google.x"],
+          "ru.kontur.updater", "com.raycast.macos", "com.google.android.studio", "EQHXZ8M8AV.group.com.google.x",
+          "com.foo.bar.beta"],
     appNames: ["CleanShot X", "Microsoft Edge", "Code", "Telegram"],
     sysNames: ["codesign", "cupsd", "dash", "CloudDocs"],
     brands: ["Telegram"],
     teams: ["BJ4HAAB9B3", "EQHXZ8M8AV"],
     bundled: ["libGalaxy.dylib", "zPTApp.bundle"],
-    zaps: [HOME + "/Library/Preferences/com.zapped.app.plist", HOME + "/Library/Caches/com.zapped.*"])
+    zaps: [HOME + "/Library/Preferences/com.zapped.app.plist", HOME + "/Library/Caches/com.zapped.*"],
+    apps: [LIB + "/Application Support/Steam/common/Game.app"])
 precondition(key("243LU875E5.groups.com.apple.podcasts") == "com.apple.podcasts")
 precondition(key("com.foo.bar.savedState") == "com.foo.bar")
 precondition(key("default.store-wal") == "default.store")
@@ -924,7 +932,7 @@ precondition(stem("Foo 1.2 beta") == "Foo 1" && stem(".hidden") == ".hidden")
 EXCLUDED_ID = "com.foo.bar"
 EXCLUDED_NAMES = ["cleanshotx"]
 precondition(!idx.known("com.foo.bar.plist") && !idx.known("com.foo.bar.helper") && !idx.known("CleanShot X"))
-precondition(idx.known("com.foo.other"))
+precondition(idx.known("com.foo.other") && idx.known("com.foo.bar.beta.plist"))
 (EXCLUDED_ID, EXCLUDED_NAMES) = (nil, [])
 let g = groups([Item(path: "/x/Telegram", size: 1, mtime: nil, reason: ""),
                 Item(path: "/x/ru.keepcoder.Telegram.plist", size: 1, mtime: nil, reason: ""),
@@ -943,6 +951,30 @@ for name in ["com.other.app", "Microsoft Edge Beta", "shadPS4", "XXXXXXXXXX.com.
              "com.google.Chrome", "EQHXZ8M8AV.group.com.google.drivefs", "Dash", "com.microsoft.autoupdate2",
              "kotlin", "com.android.Emulator.plist"] {
     precondition(!idx.known(name), name)
+}
+
+precondition(env["CFFIXED_USER_HOME"] != nil, "run via make test: it needs a temporary home")
+func file(_ p: String, _ plist: [String: Any] = [:]) {
+    try! fm.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try! PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: URL(fileURLWithPath: p))
+}
+let AS = LIB + "/Application Support"
+file(LIB + "/LaunchAgents/com.t.gone.plist", ["Program": "/nonexistent/agent"])
+file(LIB + "/LaunchAgents/com.t.live.plist", ["Program": "/bin/ls"])
+file(LIB + "/LaunchAgents/com.t.disk.plist", ["Program": "/Volumes/NoSuchDisk/agent"])
+file(AS + "/Steam/common/Game.app/Contents/Info.plist")
+file(AS + "/Google/Chrome/Default/Preferences")
+file(AS + "/Google/DriveFS/state")
+for n in ["com.gone.app", "com.hidden.app", "com.foo.bar"] { file(LIB + "/Caches/" + n + "/data") }
+try! addIgnore(LIB + "/Caches/com.hidden.app")
+var unreadable = 0
+let found = Dictionary(candidates(idx, loadIgnored(), unreadable: &unreadable).map { ($0.path, $0.reason) }) { a, _ in a }
+precondition(found[LIB + "/LaunchAgents/com.t.gone.plist"]?.hasPrefix("launchd job runs") == true)
+precondition(found[AS + "/Google/Chrome"] == "Chrome is not installed")
+precondition(found[LIB + "/Caches/com.gone.app"] != nil)
+for p in ["/LaunchAgents/com.t.live.plist", "/LaunchAgents/com.t.disk.plist", "/Application Support/Steam",
+          "/Application Support/Google/DriveFS", "/Caches/com.hidden.app", "/Caches/com.foo.bar"] {
+    precondition(found[LIB + p] == nil, p)
 }
 print("ok")
 #else
@@ -1004,22 +1036,19 @@ if listMode || isatty(0) == 0 || isatty(1) == 0 {
         scanned = app.map(appScan) ?? scan()
         done.signal()
     }
-    while done.wait(timeout: .now() + 0.1) == .timedOut {
+    while gotSignal == 0 && done.wait(timeout: .now() + 0.1) == .timedOut {
         var byte: UInt8 = 0, p = pollfd(fd: 0, events: Int16(POLLIN), revents: 0)
         if poll(&p, 1, 0) > 0 && read(0, &byte, 1) == 1 && (byte == 3 || byte == 113) { gotSignal = SIGINT }
-        if gotSignal != 0 {
-            leaveScreen()
-            signal(gotSignal, SIG_DFL)
-            raise(gotSignal)
-        }
     }
-    let result = scanned!
-    if !result.items.isEmpty && gotSignal == 0 { ui(result.items, notes: result.warnings, preselect: app != nil) }
+    if gotSignal == 0, let r = scanned, !r.items.isEmpty { ui(r.items, notes: r.warnings, preselect: app != nil) }
     leaveScreen()
     if gotSignal != 0 {
         signal(gotSignal, SIG_DFL)
         raise(gotSignal)
     }
-    if result.items.isEmpty { print("No leftovers found.") }
+    if let r = scanned, r.items.isEmpty {
+        print("No leftovers found.")
+        for w in r.warnings { print("warning: \(w)") }
+    }
 }
 #endif
