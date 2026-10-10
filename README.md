@@ -2,7 +2,7 @@
 
 Terminal UI for macOS that finds files left behind by uninstalled apps — preferences, caches, containers, launch agents, helpers — and moves the ones you pick to the Trash. It can also uninstall an app together with its files.
 
-Single Swift file, no dependencies.
+Plain Swift in `Sources/`, no dependencies.
 
 ![leftovers](screenshot.png)
 

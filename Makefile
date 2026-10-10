@@ -3,27 +3,27 @@ VERSION ?= $(or $(shell git describe --tags --always --dirty 2>/dev/null | sed '
 MACOS ?= 12.0
 
 leftovers: src
-	swiftc -O .build/main.swift -o leftovers
+	swiftc -O .build/src/*.swift -o leftovers
 
 src:
-	mkdir -p .build
-	sed 's/^let VERSION = "dev"$$/let VERSION = "$(VERSION)"/' leftovers.swift > .build/main.swift
+	rm -rf .build/src && mkdir -p .build/src && cp Sources/*.swift .build/src
+	sed -i '' 's/^let VERSION = "dev"$$/let VERSION = "$(VERSION)"/' .build/src/Config.swift
 
 dist: src
-	swiftc -O -target arm64-apple-macos$(MACOS) .build/main.swift -o .build/leftovers-arm64
-	swiftc -O -target x86_64-apple-macos$(MACOS) .build/main.swift -o .build/leftovers-x86_64
+	swiftc -O -target arm64-apple-macos$(MACOS) .build/src/*.swift -o .build/leftovers-arm64
+	swiftc -O -target x86_64-apple-macos$(MACOS) .build/src/*.swift -o .build/leftovers-x86_64
 	lipo -create .build/leftovers-arm64 .build/leftovers-x86_64 -output .build/leftovers
 	mkdir -p dist
 	tar -czf dist/leftovers-macos.tar.gz -C .build leftovers
 	cd dist && shasum -a 256 leftovers-macos.tar.gz > leftovers-macos.tar.gz.sha256
 
 install:
-	@test leftovers -nt leftovers.swift || $(MAKE) leftovers
+	@[ -f leftovers ] && [ -z "$$(find Sources -newer leftovers)" ] || $(MAKE) leftovers
 	install -d $(PREFIX)/bin
 	install -m 755 leftovers $(PREFIX)/bin/leftovers
 
 test:
-	swiftc -D SELFTEST leftovers.swift -o /tmp/leftovers-selftest
+	swiftc -D SELFTEST Sources/*.swift -o /tmp/leftovers-selftest
 	H=$$(mktemp -d) && CFFIXED_USER_HOME=$$H /tmp/leftovers-selftest; r=$$?; rm -rf $$H; exit $$r
 
 clean:
